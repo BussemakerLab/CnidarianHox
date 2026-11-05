@@ -1,0 +1,481 @@
+---
+title: "motif comparison"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r}
+#if (!requireNamespace("devtools", quietly = TRUE))
+#    install.packages("devtools")
+
+#devtools::install_github('BussemakerLab/FCpackage')
+library(FamilyCode)
+library(pheatmap)
+library(ggplot2)
+source("Rfunctions/SELEXseqFunctions.R")
+source("Rfunctions/SELEXseqFunctions_response.R")
+source('Rfunctions/motifDNAScoring.R')
+library(dplyr)
+library(ape)
+library(phangorn)
+library(ggtree)
+library(dplyr)
+library(Rtsne)
+library(ggplot2)
+library(ggrepel)
+```
+
+## load motifs
+```{r}
+PWMsID <- list.files('CnDmelHox/PSAMs', pattern = 'PSAM')
+motifs <- list()
+options(warn=-1)
+for(i in 1:length(PWMsID)){
+  motif <- PWMsID[i]
+  motif <- read.table(paste0('CnDmelHox/PSAMs/',motif), header = F)
+  motif <- ddG2frequency(motif)
+  motif[motif < 0.01] <- 0.01#add psuedo count
+  rownames(motif) <- DNA()
+  ID <- strsplit(PWMsID[i],'_')[[1]]
+  add <- list()
+  add$gene_symbol <- paste0(ID[1],'_',ID[2])
+  add$study <- i
+  add$mode <- gsub('.txt','',ID[length(ID)])
+  add$matrix <- as.matrix(motif)
+  motifs[[length(motifs)+1]] <- add
+  add <- list()
+  add$gene_symbol <- paste0(ID[1],'_',ID[2])
+  add$study <- i
+  add$mode <- paste0('-',gsub('.txt','',ID[length(ID)]))
+  add$matrix <- RCmotif(as.matrix(motif))
+  motifs[[length(motifs)+1]] <- add
+}
+```
+
+## align motifs
+```{r}
+HOXseed <- matrix(nrow = 4,ncol = 12,data = c(0,0,0,0,
+                                            0,0,0,1,
+                                            0,0,1,0,
+                                            1,0,0,0,
+                                            0,0,0,1,
+                                            0,0,0,1,
+                                            1,0,1,1,
+                                            1,0,0,0,
+                                            0,1,0,1,
+                                            0,0,0,0,
+                                            0,0,0,0,
+                                            0,0,0,0))
+rownames(HOXseed) <- DNA()
+
+HOX_motifScores <- scoreMotifList(motifs, HOXseed, weight = c(0,1,1,1,1,1,1,1,1,0,0,0))
+
+HDids<- unique(HOX_motifScores$gene_symbol)
+HDfiltered_table <- data.frame(NULL)
+for(i in 1:length(HDids)){
+  fDT <- HOX_motifScores[HOX_motifScores$gene_symbol == HDids[i],]
+  HDfiltered_table <- rbind.data.frame(HDfiltered_table, fDT[which.min(fDT$score),])
+}
+plot.ecdf(as.numeric(HDfiltered_table$score))
+HOX_motifs <- filterMotifList(HDfiltered_table, motifs, 12)
+# Define your color mapping
+name_colors <- list(
+  "Cn"    = "#E69F00",
+  "dmel"  = "#56B4E9",
+  "human" = "#009E73"
+)
+
+lapply(HOX_motifs, function(x) {
+  
+  # 1. Determine color based on original name (checking for substring)
+  title_color <- "black" # Default
+  if (grepl("Cn", x$name)) {
+    title_color <- "#E69F00"
+  } else if (grepl("dmel", x$name)) {
+    title_color <- "#56B4E9"
+  } else if (grepl("human", x$name)) {
+    title_color <- "#009E73"
+  }
+  
+  # 2. Clean the name: remove first underscore and everything after it
+  clean_name <- sub("_.*", "", x$name)
+  
+  # 3. Plot with clean name and assigned color
+  mononucleotide_logo_highlight(frequency2ddG(x$matrix), highlight_pos = c(6, 7)) +
+    ggtitle(clean_name) +
+    theme(plot.title = element_text(color = title_color))
+})
+dimer_motifs <- HOX_motifs
+```
+
+
+
+## make distance matrix
+```{r}
+rooted = F
+plotClusters(HOX_motifs, rooted = rooted)
+```
+
+## heat map on only HOX 4mer
+```{r}
+Hox4mer_motifs <- lapply(HOX_motifs, function(x) list(name = x$name, matrix = x$matrix[,6:9]))
+plotClusters(Hox4mer_motifs, rooted = rooted)
+```
+## heat map on HOX-PBX 8mer
+```{r}
+Hox8mer_motifs <- lapply(HOX_motifs, function(x) list(name = x$name, matrix = x$matrix[,2:9]))
+plotClusters(Hox8mer_motifs, rooted = rooted)
+```
+
+## heat map on position 7 only
+```{r}
+HoxPos7_motifs <- lapply(HOX_motifs, function(x) list(name = x$name, matrix = as.data.frame(x$matrix[,7])))
+plotClusters(HoxPos7_motifs, rooted = rooted)
+```
+
+## heat map on position 7 only
+```{r}
+HoxPos7_motifs <- lapply(HOX_motifs, function(x) list(name = x$name, matrix = as.data.frame(x$matrix[,c(1:6, 8:12)])))
+plotClusters(HoxPos7_motifs, rooted = rooted)
+```
+
+## heat map of Dmel Hox-Exd
+```{r}
+motifNames <- unlist(lapply(HOX_motifs, function(x) x$name))
+plotClusters(HOX_motifs[grep('dmel', motifNames)], rooted = rooted)
+```
+
+## heat map of Cnidarian Hox-PDB
+```{r}
+plotClusters(HOX_motifs[grep('Cn', motifNames)], rooted = rooted)
+```
+
+## heatmap of Human and Cndarian Hox
+```{r}
+
+plotClusters(HOX_motifs[-grep('dmel', motifNames)], rooted = rooted)
+```
+## load Monomer motifs
+```{r}
+PWMsID <- list.files('CnHoxMonomer/PSAMs', pattern = 'PSAM_')
+motifs <- list()
+options(warn=-1)
+for(i in 1:length(PWMsID)){
+  motif <- PWMsID[i]
+  motif <- read.table(paste0('CnHoxMonomer/PSAMs/',motif), header = F)
+  motif <- ddG2frequency(motif)
+  motif[motif < 0.01] <- 0.01#add psuedo count
+  rownames(motif) <- DNA()
+  ID <- strsplit(PWMsID[i],'_')[[1]]
+  add <- list()
+  add$gene_symbol <- paste0(ID[1],'_',ID[2])
+  add$study <- i
+  add$mode <- gsub('.txt','',ID[length(ID)])
+  add$matrix <- as.matrix(motif)
+  motifs[[length(motifs)+1]] <- add
+  add <- list()
+  add$gene_symbol <- paste0(ID[1],'_',ID[2])
+  add$study <- i
+  add$mode <- paste0('-',gsub('.txt','',ID[length(ID)]))
+  add$matrix <- RCmotif(as.matrix(motif))
+  motifs[[length(motifs)+1]] <- add
+}
+```
+
+## align motifs
+```{r}
+HOXseed <- matrix(nrow = 4,ncol = 8,data = c(0.5,0,0,0.5, #ACGT
+                                            0,0,0,1,
+                                            1,0,0,0,
+                                            1,0,0,0,
+                                            0,0,0,1,
+                                            0,0,0.5,0.5,
+                                            0.5,0,0.5,0,
+                                            0,0,0,0
+                                            ))
+rownames(HOXseed) <- DNA()
+
+HOX_motifScores <- scoreMotifList(motifs, HOXseed)
+
+HDids<- unique(HOX_motifScores$gene_symbol)
+HDfiltered_table <- data.frame(NULL)
+for(i in 1:length(HDids)){
+  fDT <- HOX_motifScores[HOX_motifScores$gene_symbol == HDids[i],]
+  HDfiltered_table <- rbind.data.frame(HDfiltered_table, fDT[which.min(fDT$score),])
+}
+plot.ecdf(as.numeric(HDfiltered_table$score))
+HOX_motifs <- filterMotifList(HDfiltered_table, motifs, 8)
+lapply(HOX_motifs, function(x) {
+  
+  # 1. Determine color based on original name (checking for substring)
+  title_color <- "black" # Default
+  if (grepl("Cn", x$name)) {
+    title_color <- "#E69F00"
+  } else if (grepl("dmel", x$name)) {
+    title_color <- "#56B4E9"
+  } else if (grepl("human", x$name)) {
+    title_color <- "#009E73"
+  }
+  
+  # 2. Clean the name: remove first underscore and everything after it
+  clean_name <- sub("_.*", "", x$name)
+  
+  # 3. Plot with clean name and assigned color
+  mononucleotide_logo(frequency2ddG(x$matrix)) +
+    ggtitle(clean_name) +
+    theme(plot.title = element_text(color = title_color))
+})
+monomer_motifs <- HOX_motifs
+```
+
+## make distance matrix
+```{r}
+plotClusters(HOX_motifs, rooted = rooted)
+```
+
+## heat map on only HOX 4mer
+```{r}
+Hox4mer_motifs <- lapply(HOX_motifs, function(x) list(name = x$name, matrix = x$matrix[,2:5]))
+plotClusters(Hox4mer_motifs, rooted = rooted)
+```
+
+## 2D tetrahedral projection onto HOXA1-HOXA5-HOXA9 plane
+Position 7
+```{r, fig.width=6.5, fig.height=5}
+library(stringr)
+source("Rfunctions/SELEXseqFunctions_response.R")
+
+response2_projection_pwms <- c(
+  list.files(
+    'CnDmelHox/PSAMs/AntHox1Relicates',
+    pattern = 'PSAM.*\\.txt$',
+    full.names = TRUE
+  ),
+  list.files(
+    'CnDmelHox/PSAMs/AntHox1aReplicates',
+    pattern = 'intein.*PSAM.*\\.txt$',
+    full.names = TRUE
+  ),
+  list.files(
+    'CnDmelHox/PSAMs/AntHox6Replicates',
+    pattern = 'PSAM.*\\.txt$',
+    full.names = TRUE
+  ),
+  list.files(
+    'CnDmelHox/PSAMs/AntHox6aReplicates',
+    pattern = 'rep1.*PSAM.*\\.txt$',
+    full.names = TRUE
+  ),
+  list.files(
+    'CnDmelHox/PSAMs/AntHox7Replicates',
+    pattern = 'rep1.*PSAM.*\\.txt$',
+    full.names = TRUE
+  ),
+  list.files(
+    'CnDmelHox/PSAMs/AntHox8Replicates',
+    pattern = 'PSAM.*\\.txt$',
+    full.names = TRUE
+  )
+)
+
+if (length(response2_projection_pwms) != 20) {
+  stop(
+    paste(
+      "Expected 20 Response2 replicate PSAM files for projection error;",
+      length(response2_projection_pwms),
+      "were found."
+    )
+  )
+}
+
+response2_projection_selection <- select_hox_seed_representatives(
+  load_hox_dimer_motifs(response2_projection_pwms),
+  make_hox_seed()
+)
+
+hoxa_projection_matrix <- do.call(
+  rbind,
+  lapply(dimer_motifs, function(x) as.numeric(matrix2tetrahedron(x$matrix)))
+)
+rownames(hoxa_projection_matrix) <- sapply(dimer_motifs, function(x) x$name)
+colnames(hoxa_projection_matrix) <- as.vector(
+  outer(c('X','Y','Z'), 1:ncol(dimer_motifs[[1]]$matrix), paste0)
+)
+
+hoxa_projection_anchors <- c("HoxA1_human", "HoxA5_human", "HoxA9_human")
+hoxa_projection_targets <- c("AntHOX1a_Cn", "AntHOX8_Cn", "AntHOX6a_Cn")
+hoxa_projection_target_labels <- c(
+  "AntHOX1a_Cn" = "AntHOX1a-PBX rep1",
+  "AntHOX8_Cn" = "AntHOX8",
+  "AntHOX6a_Cn" = "AntHOX6a"
+)
+missing_projection_names <- setdiff(
+  c(hoxa_projection_anchors, hoxa_projection_targets),
+  rownames(hoxa_projection_matrix)
+)
+
+if (length(missing_projection_names) > 0) {
+  stop(
+    paste(
+      "Missing projection motifs:",
+      paste(missing_projection_names, collapse = ", ")
+    )
+  )
+}
+
+plot_response_motif_plane_projection(
+  reference_matrix = hoxa_projection_matrix,
+  targets = hoxa_projection_targets,
+  target_labels = unname(
+    hoxa_projection_target_labels[hoxa_projection_targets]
+  ),
+  replicate_motifs = response2_projection_selection$motifs,
+  anchors = hoxa_projection_anchors,
+  posStart = 7,
+  posEnd = 7,
+  label_all = TRUE,
+  show_axes = FALSE,
+  show_title = FALSE,
+  show_legend = FALSE
+)
+plot_response_motif_plane_projection(
+  reference_matrix = hoxa_projection_matrix,
+  targets = hoxa_projection_targets,
+  target_labels = unname(
+    hoxa_projection_target_labels[hoxa_projection_targets]
+  ),
+  replicate_motifs = response2_projection_selection$motifs,
+  anchors = hoxa_projection_anchors,
+  posStart = 6,
+  posEnd = 9,
+  label_all = TRUE,
+  show_axes = FALSE,
+  show_title = FALSE,
+  show_legend = FALSE
+)
+plot_response_motif_plane_projection(
+  reference_matrix = hoxa_projection_matrix,
+  targets = hoxa_projection_targets,
+  target_labels = unname(
+    hoxa_projection_target_labels[hoxa_projection_targets]
+  ),
+  replicate_motifs = response2_projection_selection$motifs,
+  anchors = hoxa_projection_anchors,
+  posStart = 2,
+  posEnd = 9,
+  label_all = TRUE,
+  show_axes = FALSE,
+  show_title = FALSE,
+  show_legend = FALSE
+)
+plot_response_motif_plane_projection(
+  reference_matrix = hoxa_projection_matrix,
+  targets = hoxa_projection_targets,
+  target_labels = unname(
+    hoxa_projection_target_labels[hoxa_projection_targets]
+  ),
+  replicate_motifs = response2_projection_selection$motifs,
+  anchors = hoxa_projection_anchors,
+  posStart = 1,
+  posEnd = 12,
+  label_all = TRUE,
+  show_axes = FALSE,
+  show_title = FALSE,
+  show_legend = FALSE
+)
+plot_response_motif_plane_projection(
+  reference_matrix = hoxa_projection_matrix,
+  targets = hoxa_projection_targets,
+  target_labels = unname(
+    hoxa_projection_target_labels[hoxa_projection_targets]
+  ),
+  replicate_motifs = response2_projection_selection$motifs,
+  anchors = hoxa_projection_anchors,
+  posStart = 1,
+  posEnd = 12,
+  posExclude = 7,
+  label_all = TRUE,
+  show_axes = FALSE,
+  show_title = FALSE,
+  show_legend = FALSE
+)
+##error bars should be stardard deviation accorss all 12 postions, not standard error. radius of error is the mean of euclidian distance between pairs.
+```
+
+## 2D tetrahedral projection onto T-A-G single-position plane
+```{r, fig.width=6.5, fig.height=5}
+response2_projection_error <- response_mean_projection_rmsd(
+  response2_projection_selection$motifs,
+  position = 7
+)
+
+plot_response_position_projection(
+  motifs = dimer_motifs,
+  target = hoxa_projection_targets,
+  target_label = unname(
+    hoxa_projection_target_labels[hoxa_projection_targets]
+  ),
+  position = 7,
+  error = response2_projection_error,
+  title = "T-A-G plane projection - AntHOX comparison",
+  label_all = TRUE,
+  show_axes = FALSE,
+  show_title = FALSE,
+  show_legend = FALSE
+)
+```
+
+```{r}
+plot_tetrahedron(gene2pos(dimer_motifs,pos = 'P7'))
+```
+
+<!-- # Synthetic scatter plots -->
+<!-- ```{r} -->
+<!-- probes <- c('TGATTAAT','TGATTTAT','TGATTGAT','TGATGGAT', 'TGATTTAC', 'TGATAAAT', 'TGATCGAT') -->
+<!-- seqs <- generate_dna(2000, 12, motifs = probes) -->
+
+<!-- for(i in 1:length(dimer_motifs)){ -->
+<!--   for(j in 1:length(dimer_motifs)){ -->
+<!--     if(j >= i) next -->
+<!--     plot(makeSyntheticScatterPlot(motif1 = dimer_motifs[[i]],motif2 = dimer_motifs[[j]], seqs, probes)) -->
+<!--   } -->
+<!-- } -->
+<!-- ``` -->
+
+<!-- # Monomer comparison -->
+<!-- ```{r} -->
+<!-- for(i in 1:length(monomer_motifs)){ -->
+<!--   for(j in 1:length(monomer_motifs)){ -->
+<!--     if(j >= i) next -->
+<!--     plot(makeSyntheticScatterPlot(motif1 = monomer_motifs[[i]],motif2 = monomer_motifs[[j]], seqs, probes)) -->
+<!--   } -->
+<!-- } -->
+<!-- ``` -->
+
+<!-- # Monomer-Dimer comparison -->
+<!-- ```{r} -->
+<!-- for(i in 1:length(dimer_motifs)){ -->
+<!--   for(j in 1:length(monomer_motifs)){ -->
+<!--     plot(makeSyntheticScatterPlot(motif1 = dimer_motifs[[i]],motif2 = monomer_motifs[[j]], seqs, probes)) -->
+<!--   } -->
+<!-- } -->
+<!-- ``` -->
+
+<!-- # Column representation -->
+<!-- ```{r} -->
+<!-- for(i in 1:length(dimer_motifs)){ -->
+<!--   plot(plot_group_jitter(makeProbeAffinityList(probes, getMotifScores(dimer_motifs[[i]], seqs)), probe, Affinities, title = dimer_motifs[[i]]$name)) -->
+<!-- } -->
+
+<!-- ``` -->
+<!-- ## AntHox6a vs Dfd     -->
+
+<!-- ```{r} -->
+<!-- probes <- c('TGATTAAT','TGATTGAT') -->
+<!-- seqs <- generate_dna(1000, 12, motifs = probes) -->
+<!-- plot(makeSyntheticScatterPlot(motif1 = dimer_motifs[[6]],motif2 = dimer_motifs[[10]], seqs, probes, colors = c("#0c64c0", "#0f5c1a"))) -->
+
+<!-- ``` -->
+

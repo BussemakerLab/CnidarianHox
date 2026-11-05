@@ -1,0 +1,6 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Preserve the exact input bytes used by the manuscript source-data checksums.
+CnDmelHox/PSAMs/** text eol=lf
+CnHoxMonomer/PSAMs/** text eol=lf

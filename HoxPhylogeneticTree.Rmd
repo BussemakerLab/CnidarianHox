@@ -1,0 +1,158 @@
+---
+title: "Phylogenitics trees"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r}
+library(ape)
+library(phangorn)
+library(ggtree)
+library(ggplot2)
+library(msa)
+library(Biostrings)
+library(dplyr)
+source("Rfunctions/SELEXseqFunctions.R")
+```
+
+## make tree
+```{r}
+# Run the function
+final_plot <- generate_hox_tree("Alignments/HoxSequence.fasta")
+
+# Display the plot
+print(final_plot)
+
+# Run the function
+final_plot <- generate_hox_tree("Alignments/HoxSequence.fasta", remove_gaps = F)
+
+# Display the plot
+print(final_plot)
+```
+
+
+
+## load HD hmm alignment
+```{r}
+HoxAli <- FamilyCode::ExtractHmm("Alignments/HoxHmm.sto")
+colnames(HoxAli) <- c('name', 'seq')
+FamilyCode::writeFasta(HoxAli, "Alignments/HoxAli.fasta")
+```
+
+## make hox alignment tree
+```{r}
+#>AbdB_dmel
+#RKKRKPYSKFQTLELEKEFLFNAYVSKQKRWELARNLQLTERQVKIWFQNRRMKNKK
+# Run the function
+final_plot <- generate_hox_tree("Alignments/HoxAli.fasta")
+
+# Display the plot
+print(final_plot+ggplot2::ggtitle('HD only'))
+
+final_plot <- generate_hox_tree("Alignments/HoxAli.fasta", remove_gaps = FALSE)
+
+# Display the plot
+print(final_plot+ggplot2::ggtitle('HD only'))
+```
+
+
+
+## YPWM alignment
+```{r}
+my_seqs <- readAAStringSet("Alignments/HoxSequence.fasta")
+
+# 2. Perform Alignment (using ClustalW, Muscle, or Omega)
+# Computes the Multiple Sequence Alignment
+my_aln <- msa(my_seqs, method = "ClustalW")
+
+# 3. Export to Stockholm
+write_stockholm(my_aln, "Alignments/HoxSequence.sto")
+YPWMAli <- FamilyCode::ExtractHmm("Alignments/HoxSequence.sto")
+colnames(YPWMAli) <- c('name', 'seq')
+YPWMstart <- unlist(gregexpr('YPWM', YPWMAli$seq))[1]
+HOXend <- unlist(gregexpr('MKLKK', YPWMAli$seq))[1]
+
+YPWMAli$seq <- substr(YPWMAli$seq, YPWMstart - 5, HOXend + 15)
+YPWMAli$seq <- gsub('-','',YPWMAli$seq)
+FamilyCode::writeFasta(YPWMAli, "Alignments/YPWMAli.fasta")
+
+final_plot <- generate_hox_tree("Alignments/YPWMAli.fasta")
+
+# Display the plot
+print(final_plot+ggplot2::ggtitle('YPWM included'))
+
+final_plot <- generate_hox_tree("Alignments/YPWMAli.fasta", remove_gaps = FALSE)
+
+# Display the plot
+print(final_plot+ggplot2::ggtitle('YPWM included'))
+```
+
+
+## make dmel only tree
+```{r}
+# Run the function
+final_plot <- generate_hox_tree("Alignments/dmelHoxSequence.fasta")
+
+# Display the plot
+print(final_plot)
+
+# Run the function
+final_plot <- generate_hox_tree("Alignments/dmelHoxSequence.fasta", remove_gaps = F)
+
+# Display the plot
+print(final_plot)
+```
+
+## load dmel HD hmm alignment
+```{r}
+HoxAli <- FamilyCode::ExtractHmm("Alignments/dmelHoxHmm.sto")
+colnames(HoxAli) <- c('name', 'seq')
+FamilyCode::writeFasta(HoxAli, "Alignments/dmelHoxAli.fasta")
+```
+
+## make hox alignment tree
+```{r}
+#>AbdB_dmel
+#RKKRKPYSKFQTLELEKEFLFNAYVSKQKRWELARNLQLTERQVKIWFQNRRMKNKK
+# Run the function
+final_plot <- generate_hox_tree("Alignments/dmelHoxAli.fasta")
+
+# Display the plot
+print(final_plot+ggplot2::ggtitle('HD only'))
+
+final_plot <- generate_hox_tree("Alignments/dmelHoxAli.fasta", remove_gaps = FALSE)
+
+# Display the plot
+print(final_plot+ggplot2::ggtitle('HD only'))
+```
+
+## YPWM alignment
+```{r}
+my_seqs <- readAAStringSet("Alignments/dmelHoxSequence.fasta")
+
+# 2. Perform Alignment (using ClustalW, Muscle, or Omega)
+# Computes the Multiple Sequence Alignment
+my_aln <- msa(my_seqs, method = "ClustalW")
+
+# 3. Export to Stockholm
+write_stockholm(my_aln, "Alignments/HoxSequence.sto")
+YPWMAli <- FamilyCode::ExtractHmm("Alignments/HoxSequence.sto")
+colnames(YPWMAli) <- c('name', 'seq')
+YPWMstart <- unlist(gregexpr('YPWM', YPWMAli$seq))[1]
+HOXend <- unlist(gregexpr('MKLKK', YPWMAli$seq))[1]
+
+YPWMAli$seq <- substr(YPWMAli$seq, YPWMstart - 5, HOXend + 15)
+YPWMAli$seq <- gsub('-','',YPWMAli$seq)
+FamilyCode::writeFasta(YPWMAli, "Alignments/YPWMAli.fasta")
+
+final_plot <- generate_hox_tree("Alignments/YPWMAli.fasta")
+
+# Display the plot
+print(final_plot+ggplot2::ggtitle('YPWM included'))
+
+final_plot <- generate_hox_tree("Alignments/YPWMAli.fasta", remove_gaps = FALSE)
+
+# Display the plot
+print(final_plot+ggplot2::ggtitle('YPWM included'))
+```

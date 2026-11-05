@@ -1,0 +1,11 @@
+"Name","ReplicateKey","HasReplicate","Used_for_error_bars"
+"AntHOX1-PBX-rep1","AntHOX1-PBX",TRUE,TRUE
+"AntHOX1-PBX-rep2","AntHOX1-PBX",TRUE,TRUE
+"AntHOX1a-PBX-rep1 (intein)","AntHOX1a-PBX::intein",TRUE,TRUE
+"AntHOX1a-PBX-rep2 (intein)","AntHOX1a-PBX::intein",TRUE,TRUE
+"AntHOX6-PBX-rep1","AntHOX6-PBX",TRUE,TRUE
+"AntHOX6-PBX-rep2","AntHOX6-PBX",TRUE,TRUE
+"AntHOX6a-PBX-rep1","AntHOX6a-PBX",TRUE,FALSE
+"AntHOX7-PBX-rep1","AntHOX7-PBX",TRUE,FALSE
+"AntHOX8-PBX-rep1","AntHOX8-PBX",TRUE,TRUE
+"AntHOX8-PBX-rep2","AntHOX8-PBX",TRUE,TRUE

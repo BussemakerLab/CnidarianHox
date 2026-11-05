@@ -1,0 +1,1252 @@
+---
+title: "SELEX source data for manuscript figures"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_depth: 3
+    self_contained: true
+    keep_md: true
+    mathjax: null
+    highlight: null
+---
+
+This report presents the SELEX-derived motif logos, DNA-binding specificity
+trees, projections and affinity comparisons for the manuscript figures.
+Figures 2 and 3 contain the main SELEX panels; Figures S2-S19 contain the
+corresponding supplementary panels. Numerical source data and software
+versions are provided at the end.
+
+<style>
+body { color: #222; font-size: 15px; line-height: 1.6; }
+.main-container { max-width: 1240px; padding: 24px 36px 64px; }
+h1, h2, h3 { color: #111; line-height: 1.25; }
+h1 { margin-top: 48px; font-size: 28px; }
+h2 { margin-top: 32px; font-size: 22px; }
+h3 { font-size: 18px; }
+.title { margin-top: 10px; font-size: 32px; }
+img { max-width: 100%; height: auto; }
+table { font-size: 13px; margin-bottom: 24px; }
+th, td { padding: 7px 10px !important; }
+#TOC { background: #f7f8fa; padding: 20px 24px; margin: 24px 0 36px; }
+#TOC > ul { columns: 2; column-gap: 48px; padding-left: 20px; }
+#TOC li { break-inside: avoid; }
+@media (max-width: 768px) {
+  .main-container { padding: 16px; }
+  #TOC > ul { columns: 1; }
+}
+@media print { .main-container { max-width: none; padding: 0; } }
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  dpi = 300,
+  fig.retina = 2,
+  dev = c("png", "cairo_pdf"),
+  cache = FALSE,
+  error = FALSE,
+  fig.path = "outputs/publication_panels/",
+  fig.width = 6.5,
+  fig.height = 5
+)
+
+required_packages <- c(
+  "FamilyCode", "pheatmap", "ggplot2", "dplyr", "ape", "phangorn",
+  "ggtree", "Rtsne", "ggrepel", "EnvStats", "stringr", "digest"
+)
+missing_packages <- required_packages[
+  !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
+]
+if (length(missing_packages) > 0) {
+  stop(
+    paste(
+      "Install the required R packages before knitting Figures:",
+      paste(missing_packages, collapse = ", ")
+    )
+  )
+}
+
+invisible(lapply(required_packages, library, character.only = TRUE))
+source("Rfunctions/SELEXseqFunctions.R")
+source("Rfunctions/SELEXseqFunctions_response.R")
+source("Rfunctions/motifDNAScoring.R")
+source("Rfunctions/scatter_forward_rc.R")
+
+source_data_dir <- file.path("outputs", "manuscript_source_data")
+dir.create(source_data_dir, recursive = TRUE, showWarnings = FALSE)
+render_cluster_panel <- function(...) {
+  result <- plot_response_cluster_panels(...)
+  panel <- knitr::opts_current$get("label")
+  if (!grepl("legend", panel)) {
+    tree <- ape::as.phylo(result$tree_row)
+    display_labels <- response_clean_labels(tree$tip.label)
+    tree$tip.label <- gsub("[[:space:]]+\\((intein|GST)\\)", "-\\1", tree$tip.label)
+    tree_text <- ape::write.tree(tree)
+    exported_tree <- ape::read.tree(text = tree_text)
+    stopifnot(setequal(exported_tree$tip.label, tree$tip.label))
+    original_distances <- ape::cophenetic.phylo(tree)
+    exported_distances <- ape::cophenetic.phylo(exported_tree)
+    stopifnot(max(abs(original_distances - exported_distances[
+      rownames(original_distances), colnames(original_distances)])) < 1e-8)
+    writeLines(tree_text, file.path(source_data_dir, paste0(panel, ".nwk")))
+    utils::write.csv(data.frame(Tip_id = tree$tip.label, Label = display_labels),
+      file.path(source_data_dir, paste0(panel, "-labels.csv")), row.names = FALSE)
+    utils::write.csv(result$r2_matrix,
+      file.path(source_data_dir, paste0(panel, "-r2.csv")))
+  }
+  invisible(result)
+}
+```
+
+## Binding models
+
+Position-specific affinity matrices describe sequence-dependent binding
+energies. For each sample, candidate models are evaluated against the HOX-PBX
+seed, and the model, orientation and alignment with the lowest motif-matching
+score define its specificity signature. The 12-mer spans positions 1-12;
+the HOX-PBX 8-mer spans positions 2-9, and the HOX 4-mer spans positions 6-9.
+
+```{r representative-dimer-inputs, include=FALSE}
+HOXseed <- make_hox_seed()
+representative_pwm_files <- list.files(
+  "CnDmelHox/PSAMs",
+  pattern = "PSAM.*\\.txt$",
+  full.names = TRUE
+)
+representative_selection <- select_hox_seed_representatives(
+  load_hox_dimer_motifs(representative_pwm_files),
+  HOXseed
+)
+representative_dimer_motifs <- representative_selection$motifs
+representative_names <- vapply(
+  representative_dimer_motifs,
+  function(x) x$name,
+  character(1)
+)
+representative_12mer <- representative_dimer_motifs
+representative_8mer <- response_subset_motifs(
+  representative_dimer_motifs,
+  2:9
+)
+representative_4mer <- response_subset_motifs(
+  representative_dimer_motifs,
+  6:9
+)
+```
+
+```{r representative-monomer-inputs, include=FALSE}
+monomer_pwm_files <- list.files(
+  "CnHoxMonomer/PSAMs",
+  pattern = "PSAM.*\\.txt$",
+  full.names = TRUE
+)
+monomer_selection <- select_hox_monomer_representatives(
+  load_hox_monomer_motifs(monomer_pwm_files)
+)
+representative_monomer_motifs <- monomer_selection$motifs
+monomer_names <- vapply(
+  representative_monomer_motifs,
+  function(x) x$name,
+  character(1)
+)
+```
+
+```{r projection-replicate-inputs, include=FALSE}
+projection_replicate_files <- c(
+  list.files(
+    "CnDmelHox/PSAMs/AntHox1Relicates",
+    pattern = "PSAM.*\\.txt$",
+    full.names = TRUE
+  ),
+  list.files(
+    "CnDmelHox/PSAMs/AntHox1aReplicates",
+    pattern = "intein.*PSAM.*\\.txt$",
+    full.names = TRUE
+  ),
+  list.files(
+    "CnDmelHox/PSAMs/AntHox6Replicates",
+    pattern = "PSAM.*\\.txt$",
+    full.names = TRUE
+  ),
+  list.files(
+    "CnDmelHox/PSAMs/AntHox6aReplicates",
+    pattern = "rep1.*PSAM.*\\.txt$",
+    full.names = TRUE
+  ),
+  list.files(
+    "CnDmelHox/PSAMs/AntHox7Replicates",
+    pattern = "rep1.*PSAM.*\\.txt$",
+    full.names = TRUE
+  ),
+  list.files(
+    "CnDmelHox/PSAMs/AntHox8Replicates",
+    pattern = "PSAM.*\\.txt$",
+    full.names = TRUE
+  )
+)
+if (length(projection_replicate_files) != 20) {
+  stop("Expected 20 Response2 PSAM files for projection-error estimation.")
+}
+projection_replicate_selection <- select_hox_seed_representatives(
+  load_hox_dimer_motifs(projection_replicate_files),
+  HOXseed
+)
+hoxa_projection_matrix <- response_tetrahedron_matrix(
+  representative_dimer_motifs
+)
+hoxa_projection_anchors <- c(
+  "HoxA1_human",
+  "HoxA5_human",
+  "HoxA9_human"
+)
+projection_error <- response_mean_full_motif_plane_euclidean(
+  reference_matrix = hoxa_projection_matrix,
+  replicate_motifs = projection_replicate_selection$motifs,
+  anchors = hoxa_projection_anchors
+)
+hoxa_projection_targets <- c(
+  "AntHOX1a_Cn",
+  "AntHOX8_Cn",
+  "AntHOX6a_Cn"
+)
+hoxa_projection_target_labels <- c(
+  "AntHOX1a_Cn" = "AntHOX1a",
+  "AntHOX8_Cn" = "AntHOX8",
+  "AntHOX6a_Cn" = "AntHOX6a"
+)
+```
+
+```{r replicate-populations, include=FALSE}
+full_replicate_files <- c(
+  list.files(
+    "CnDmelHox/PSAMs/AntHox1Relicates",
+    pattern = "PSAM.*\\.txt$",
+    full.names = TRUE
+  ),
+  list.files(
+    "CnDmelHox/PSAMs/AntHox1aReplicates",
+    pattern = "(intein|GST).*PSAM.*\\.txt$",
+    full.names = TRUE
+  ),
+  list.files(
+    "CnDmelHox/PSAMs/AntHox6Replicates",
+    pattern = "PSAM.*\\.txt$",
+    full.names = TRUE
+  ),
+  list.files(
+    "CnDmelHox/PSAMs/AntHox6aReplicates",
+    pattern = "PSAM.*\\.txt$",
+    full.names = TRUE
+  ),
+  list.files(
+    "CnDmelHox/PSAMs/AntHox7Replicates",
+    pattern = "PSAM.*\\.txt$",
+    full.names = TRUE
+  ),
+  list.files(
+    "CnDmelHox/PSAMs/AntHox8Replicates",
+    pattern = "PSAM.*\\.txt$",
+    full.names = TRUE
+  )
+)
+if (length(full_replicate_files) != 28) {
+  stop("Expected 28 AntHOX replicate PSAM files before outlier analysis.")
+}
+full_replicate_selection <- select_hox_seed_representatives(
+  load_hox_dimer_motifs(full_replicate_files),
+  HOXseed
+)
+full_seed_scores <- as.numeric(full_replicate_selection$best_table$score)
+full_seed_labels <- as.character(
+  full_replicate_selection$best_table$gene_symbol
+)
+rosner_summary <- response_rosner_outlier_summary(
+  full_seed_scores,
+  k = 2,
+  alpha = 0.05
+)
+excluded_replicates <- full_seed_labels[
+  full_seed_scores > rosner_summary$threshold
+]
+expected_excluded_replicates <- c(
+  "AntHOX6a-PBX-rep2_Cn",
+  "AntHOX7-PBX-rep2_Cn"
+)
+if (!setequal(excluded_replicates, expected_excluded_replicates)) {
+  stop(
+    paste(
+      "Unexpected Rosner outlier set:",
+      paste(excluded_replicates, collapse = ", ")
+    )
+  )
+}
+
+full_file_labels <- vapply(
+  full_replicate_files,
+  parse_hox_gene_symbol,
+  character(1)
+)
+retained_replicate_files <- full_replicate_files[
+  !(full_file_labels %in% excluded_replicates)
+]
+retained_replicate_selection <- select_hox_seed_representatives(
+  load_hox_dimer_motifs(retained_replicate_files),
+  HOXseed
+)
+
+reference_pwm_files <- list.files(
+  "CnDmelHox/PSAMs",
+  pattern = "PSAM.*\\.txt$",
+  full.names = TRUE
+)
+reference_pwm_files <- reference_pwm_files[
+  !grepl("^AntHox", basename(reference_pwm_files), ignore.case = TRUE)
+]
+reference_selection <- select_hox_seed_representatives(
+  load_hox_dimer_motifs(reference_pwm_files),
+  HOXseed
+)
+retained_with_references <- c(
+  reference_selection$motifs,
+  retained_replicate_selection$motifs
+)
+
+response2_with_references <- c(
+  reference_selection$motifs,
+  projection_replicate_selection$motifs
+)
+```
+
+```{r synthetic-sequences, include=FALSE}
+scatter_probes <- c(
+  "TGATTAAT",
+  "TGATTTAT",
+  "TGATTGAT",
+  "TGATGGAT",
+  "TGATTTAC",
+  "TGATAAAT",
+  "TGATCGAT"
+)
+RNGkind("Mersenne-Twister", "Inversion", "Rejection")
+set.seed(42)
+scatter_sequences <- generate_dna(
+  2000,
+  12,
+  motifs = scatter_probes
+)
+
+anthox1a_dimer <- response_get_selected_motif(
+  representative_dimer_motifs,
+  "AntHOX1a_Cn"
+)
+anthox6a_dimer <- response_get_selected_motif(
+  representative_dimer_motifs,
+  "AntHOX6a_Cn"
+)
+anthox8_dimer <- response_get_selected_motif(
+  representative_dimer_motifs,
+  "AntHOX8_Cn"
+)
+scatter_1a_6a <- scatter_details_forward_rc(
+  anthox1a_dimer,
+  anthox6a_dimer,
+  scatter_sequences,
+  scatter_probes
+)
+scatter_1a_8 <- scatter_details_forward_rc(
+  anthox1a_dimer,
+  anthox8_dimer,
+  scatter_sequences,
+  scatter_probes
+)
+scatter_6a_8 <- scatter_details_forward_rc(
+  anthox6a_dimer,
+  anthox8_dimer,
+  scatter_sequences,
+  scatter_probes
+)
+scatter_panel_results <- list("Figure 3a" = scatter_1a_6a,
+  "Figure 3b" = scatter_1a_8, "Figure 3c" = scatter_6a_8)
+```
+
+# Figure 2
+
+## Figure 2a: Nematostella HOX-PBX logos
+
+Energy logos for the six Nematostella HOX-PBX complexes.
+
+```{r fig2a-dimer-logos, fig.width=12, fig.height=1.9, out.width='100%'}
+fig2_logo_order <- c(
+  "AntHOX6_Cn",
+  "AntHOX6a_Cn",
+  "AntHOX7_Cn",
+  "AntHOX8_Cn",
+  "AntHOX1_Cn",
+  "AntHOX1a_Cn"
+)
+fig2_logo_index <- match(fig2_logo_order, representative_names)
+if (anyNA(fig2_logo_index)) {
+  stop("One or more Figure 2a motif logos are missing.")
+}
+cn_dimer_logos <- plot_hox_dimer_logos(
+  representative_dimer_motifs[fig2_logo_index]
+)
+fig2_logo_titles <- c(
+  "AntHOX6-PBX",
+  "AntHOX6a-PBX",
+  "AntHOX7-PBX",
+  "AntHOX8-PBX",
+  "AntHOX1-PBX",
+  "AntHOX1a-PBX"
+)
+for (i in seq_along(cn_dimer_logos)) {
+  cn_dimer_logos[[i]] <- cn_dimer_logos[[i]] +
+    ggplot2::labs(title = response_hm_logo_title(fig2_logo_titles[i]))
+  cn_dimer_logos[[i]] <- response_compact_logo_plot(
+    cn_dimer_logos[[i]],
+    title_color = "#E69F00"
+  )
+}
+plot_response_logo_grid(
+  cn_dimer_logos,
+  matrix(seq_along(cn_dimer_logos), nrow = 1)
+)
+```
+
+## Figure 2b: position 7 T-A-G projection
+
+Base preferences at position 7 projected onto the T-A-G plane. T is at the
+top, G at the left and A at the right. Bars show the shared full-motif
+replicate discrepancy projected onto the three-HOX reference plane, as
+defined in [Source data](#replicate-discrepancy).
+
+```{r fig2b-position7-triangle, fig.width=7.2, fig.height=6.2}
+plot_response_position_projection(
+  motifs = representative_dimer_motifs,
+  target = hoxa_projection_targets,
+  target_label = unname(
+    hoxa_projection_target_labels[hoxa_projection_targets]
+  ),
+  position = 7,
+  error = projection_error,
+  label_all = TRUE,
+  show_axes = FALSE,
+  show_title = FALSE,
+  show_legend = FALSE
+)
+```
+
+## Figure 2c: 12-mer specificity tree
+
+Unrooted hierarchical clustering of specificity signatures for positions 1-12.
+
+```{r fig2c-tree-12mer, fig.width=9, fig.height=7}
+render_cluster_panel(
+  representative_12mer,
+  rooted = FALSE,
+  components = "tree"
+)
+```
+
+## Figure 2d: 8-mer specificity tree
+
+Unrooted hierarchical clustering of specificity signatures for positions 2-9.
+
+```{r fig2d-tree-8mer, fig.width=9, fig.height=7}
+render_cluster_panel(
+  representative_8mer,
+  rooted = FALSE,
+  components = "tree"
+)
+```
+
+## Figure 2e: 4-mer specificity tree
+
+Unrooted hierarchical clustering of specificity signatures for positions 6-9.
+
+```{r fig2e-tree-4mer, fig.width=9, fig.height=7}
+render_cluster_panel(
+  representative_4mer,
+  rooted = FALSE,
+  components = "tree"
+)
+```
+
+### Shared tree legend
+
+```{r fig2-tree-legend, fig.width=6.5, fig.height=1.1}
+render_cluster_panel(
+  representative_12mer,
+  rooted = FALSE,
+  components = "legend"
+)
+```
+
+# Figure 3
+
+Relative DNA-binding affinities are compared for 2,000 unique 12-mer sequences
+generated with random seed 42 from seven 8-mer cores and random flanking bases.
+For each sequence, affinities are summed over all binding windows in both the
+forward and reverse-complement orientations. Scoring uses four N bases at
+each end; an N contributes the least favorable coefficient at that position.
+Each window is scored relative to the optimal sequence for its model, and
+window affinities are summed without further rescaling. The same sequences
+and scoring procedure are used in Figures S7, S12 and S13. Dimer models span
+12 positions and monomer models span eight positions. Colors identify the
+seven core sequences; lines show ordinary least-squares fits with an intercept.
+
+## Figure 3a: AntHOX1a versus AntHOX6a
+
+```{r fig3a-anthox1a-vs-anthox6a, fig.width=6.5, fig.height=5}
+scatter_1a_6a$plot
+```
+
+## Figure 3b: AntHOX1a versus AntHOX8
+
+```{r fig3b-anthox1a-vs-anthox8, fig.width=6.5, fig.height=5}
+scatter_1a_8$plot
+```
+
+## Figure 3c: AntHOX6a versus AntHOX8
+
+```{r fig3c-anthox6a-vs-anthox8, fig.width=6.5, fig.height=5}
+scatter_6a_8$plot
+```
+
+# Supplementary Figure 2
+
+DNA-binding specificity signatures projected onto the plane defined by human
+HOXA1, HOXA5 and HOXA9. Panels a-c use positions 1-12, 2-9 and 6-9,
+respectively. Each selected position contributes its X, Y and Z tetrahedron
+coordinates. For the bars, each of four replicate differences retains all
+36 coordinates and is projected onto the plane defined by the full
+12-position HOXA1, HOXA5 and HOXA9 signatures. The mean of the four projected
+Euclidean lengths is the common bar half-width in panels a-c; total bar
+length is twice this mean. The same full-signature error calculation is
+used for the 12-mer, 8-mer and 4-mer panels.
+
+## Figure S2a: 12-mer projection
+
+```{r figS2a-projection-12mer, fig.width=7.2, fig.height=6.2}
+plot_response_motif_plane_projection(
+  reference_matrix = hoxa_projection_matrix,
+  targets = hoxa_projection_targets,
+  target_labels = unname(
+    hoxa_projection_target_labels[hoxa_projection_targets]
+  ),
+  replicate_motifs = projection_replicate_selection$motifs,
+  anchors = hoxa_projection_anchors,
+  posStart = 1,
+  posEnd = 12,
+  error = projection_error,
+  label_all = TRUE,
+  show_axes = FALSE,
+  show_title = FALSE,
+  show_legend = FALSE
+)
+```
+
+## Figure S2b: 8-mer projection
+
+```{r figS2b-projection-8mer, fig.width=7.2, fig.height=6.2}
+plot_response_motif_plane_projection(
+  reference_matrix = hoxa_projection_matrix,
+  targets = hoxa_projection_targets,
+  target_labels = unname(
+    hoxa_projection_target_labels[hoxa_projection_targets]
+  ),
+  replicate_motifs = projection_replicate_selection$motifs,
+  anchors = hoxa_projection_anchors,
+  posStart = 2,
+  posEnd = 9,
+  error = projection_error,
+  label_all = TRUE,
+  show_axes = FALSE,
+  show_title = FALSE,
+  show_legend = FALSE
+)
+```
+
+## Figure S2c: 4-mer projection
+
+```{r figS2c-projection-4mer, fig.width=7.2, fig.height=6.2}
+plot_response_motif_plane_projection(
+  reference_matrix = hoxa_projection_matrix,
+  targets = hoxa_projection_targets,
+  target_labels = unname(
+    hoxa_projection_target_labels[hoxa_projection_targets]
+  ),
+  replicate_motifs = projection_replicate_selection$motifs,
+  anchors = hoxa_projection_anchors,
+  posStart = 6,
+  posEnd = 9,
+  error = projection_error,
+  label_all = TRUE,
+  show_axes = FALSE,
+  show_title = FALSE,
+  show_legend = FALSE
+)
+```
+
+# Supplementary Figure 3
+
+Cross-species 12-mer R-squared heatmap.
+
+**Figure S3b**
+
+```{r supp3-cross-species-12mer-r2, fig.width=9, fig.height=8}
+render_cluster_panel(
+  representative_12mer,
+  components = "r2_heatmap"
+)
+```
+
+# Supplementary Figure 4
+
+Cross-species HOX-PBX 8-mer R-squared heatmap.
+
+**Figure S4b**
+
+```{r supp4-cross-species-8mer-r2, fig.width=9, fig.height=8}
+render_cluster_panel(
+  representative_8mer,
+  components = "r2_heatmap"
+)
+```
+
+# Supplementary Figure 5
+
+Cross-species HOX 4-mer R-squared heatmap.
+
+**Figure S5b**
+
+```{r supp5-cross-species-4mer-r2, fig.width=9, fig.height=8}
+render_cluster_panel(
+  representative_4mer,
+  components = "r2_heatmap"
+)
+```
+
+# Supplementary Figure 6
+
+Human and Nematostella HOX-PBX 12-mer clustering.
+
+**Figure S6b**
+
+```{r supp6-human-cnidarian-tree, fig.width=8.5, fig.height=7}
+human_cn_motifs <- representative_dimer_motifs[
+  !grepl("_dmel$", representative_names)
+]
+render_cluster_panel(human_cn_motifs, components = "tree")
+```
+
+**Figure S6c**
+
+```{r supp6-human-cnidarian-r2, fig.width=8.5, fig.height=7}
+render_cluster_panel(human_cn_motifs, components = "r2_heatmap")
+```
+
+# Supplementary Figure 7
+
+Pairwise synthetic-affinity comparisons among the three human anchors and the
+three directive-axis Nematostella HOX-PBX motifs.
+
+**Figure S7a-l**
+
+```{r supp7-human-cnidarian-scatters, fig.width=4.8, fig.height=4, out.width='32%', fig.show='hold'}
+supp6_pairs <- list(
+  c("HoxA1_human", "HoxA5_human"),
+  c("HoxA1_human", "HoxA9_human"),
+  c("HoxA5_human", "HoxA9_human"),
+  c("AntHOX1a_Cn", "HoxA1_human"),
+  c("AntHOX1a_Cn", "HoxA5_human"),
+  c("AntHOX1a_Cn", "HoxA9_human"),
+  c("AntHOX6a_Cn", "HoxA1_human"),
+  c("AntHOX6a_Cn", "HoxA5_human"),
+  c("AntHOX6a_Cn", "HoxA9_human"),
+  c("AntHOX8_Cn", "HoxA1_human"),
+  c("AntHOX8_Cn", "HoxA5_human"),
+  c("AntHOX8_Cn", "HoxA9_human")
+)
+
+for (panel_index in seq_along(supp6_pairs)) {
+  motif_pair <- supp6_pairs[[panel_index]]
+  result <- scatter_details_forward_rc(
+    x_motif = response_get_selected_motif(representative_dimer_motifs, motif_pair[2]),
+    y_motif = response_get_selected_motif(representative_dimer_motifs, motif_pair[1]),
+    scatter_sequences, scatter_probes)
+  scatter_panel_results[[paste0("Figure S7", letters[panel_index])]] <- result
+  response_draw_plot(result$plot)
+}
+```
+
+# Supplementary Figure 8
+
+Representative Nematostella HOX-PBX 12-mer clustering.
+
+**Figure S8b**
+
+```{r supp8-cnidarian-tree, fig.width=8, fig.height=6.5}
+cn_representative_motifs <- representative_dimer_motifs[
+  grepl("_Cn$", representative_names)
+]
+render_cluster_panel(cn_representative_motifs, components = "tree")
+```
+
+**Figure S8c**
+
+```{r supp8-cnidarian-r2, fig.width=7, fig.height=6}
+render_cluster_panel(cn_representative_motifs, components = "r2_heatmap")
+```
+
+# Supplementary Figure 9
+
+Drosophila and human HOX-cofactor logos.
+
+**Figure S9 (logo components)**
+
+```{r supp9-reference-logos, fig.width=12, fig.height=5, out.width='100%'}
+supp8_logo_order <- c(
+  "Lab_dmel",
+  "Pb_dmel",
+  "Dfd_dmel",
+  "Scr_dmel",
+  "Antp_dmel",
+  "Ubx_dmel",
+  "AbdA_dmel",
+  "AbdB_dmel",
+  "HoxA1_human",
+  "HoxA5_human",
+  "HoxA9_human"
+)
+supp8_logo_index <- match(supp8_logo_order, representative_names)
+if (anyNA(supp8_logo_index)) {
+  stop("One or more Supplementary Figure 9 motif logos are missing.")
+}
+reference_logos <- plot_hox_dimer_logos(
+  representative_dimer_motifs[supp8_logo_index]
+)
+supp8_logo_titles <- c(
+  "Lab-Exd",
+  "Pb-Exd",
+  "Dfd-Exd",
+  "Scr-Exd",
+  "Antp-Exd",
+  "Ubx-Exd",
+  "AbdA-Exd",
+  "AbdB-Exd",
+  "HoxA1-PBX1",
+  "HoxA5-PBX1",
+  "HoxA9-PBX1"
+)
+for (i in seq_along(reference_logos)) {
+  reference_logos[[i]] <- reference_logos[[i]] +
+    ggplot2::labs(title = response_hm_logo_title(supp8_logo_titles[i]))
+  reference_logos[[i]] <- response_compact_logo_plot(reference_logos[[i]])
+}
+
+# Empty cells reserve the positions occupied by species schematics in the paper.
+supp8_logo_layout <- matrix(
+  c(
+    NA, NA, 1, 2, 3,
+    4, 5, 6, 7, 8,
+    NA, NA, 9, 10, 11
+  ),
+  nrow = 3,
+  byrow = TRUE
+)
+plot_response_logo_grid(reference_logos, supp8_logo_layout)
+```
+
+# Supplementary Figure 10
+
+Drosophila HOX-Exd 12-mer clustering.
+
+**Figure S10b**
+
+```{r supp10-drosophila-tree, fig.width=8, fig.height=6.5}
+dmel_motifs <- representative_dimer_motifs[
+  grepl("_dmel$", representative_names)
+]
+render_cluster_panel(dmel_motifs, components = "tree")
+```
+
+**Figure S10c**
+
+```{r supp10-drosophila-r2, fig.width=7, fig.height=6}
+render_cluster_panel(dmel_motifs, components = "r2_heatmap")
+```
+
+# Supplementary Figure 11
+
+Nematostella HOX monomer motifs and clustering.
+
+**Figure S11b**
+
+```{r supp11-monomer-logos, fig.width=10, fig.height=1.8, out.width='100%'}
+supp10_logo_order <- c(
+  "AntHOX6a_Cn",
+  "AntHOX1a_Cn",
+  "AntHOX7_Cn",
+  "AntHOX8_Cn",
+  "AntHOX1_Cn"
+)
+supp10_logo_index <- match(supp10_logo_order, monomer_names)
+if (anyNA(supp10_logo_index)) {
+  stop("One or more Supplementary Figure 11 motif logos are missing.")
+}
+monomer_logos <- plot_hox_monomer_logos(
+  representative_monomer_motifs[supp10_logo_index]
+)
+supp10_logo_titles <- c(
+  "AntHOX6a",
+  "AntHOX1a",
+  "AntHOX7",
+  "AntHOX8",
+  "AntHOX1"
+)
+for (i in seq_along(monomer_logos)) {
+  monomer_logos[[i]] <- monomer_logos[[i]] +
+    ggplot2::labs(title = supp10_logo_titles[i])
+  monomer_logos[[i]] <- response_compact_logo_plot(monomer_logos[[i]])
+}
+plot_response_logo_grid(
+  monomer_logos,
+  matrix(seq_along(monomer_logos), nrow = 1)
+)
+```
+
+**Figure S11c**
+
+```{r supp11-monomer-r2, fig.width=7, fig.height=6}
+render_cluster_panel(
+  representative_monomer_motifs,
+  components = "r2_heatmap"
+)
+```
+
+# Supplementary Figure 12
+
+Synthetic-affinity comparisons used to contrast monomer and HOX-PBX binding
+relationships.
+
+**Figure S12a-k**
+
+```{r supp12-monomer-dimer-scatters, fig.width=4.8, fig.height=4, out.width='32%', fig.show='hold'}
+supp11_pairs <- list(
+  list("monomer", "AntHOX1_Cn", "monomer", "AntHOX6a_Cn"),
+  list("dimer", "AntHOX1_Cn", "dimer", "AntHOX6a_Cn"),
+  list("monomer", "AntHOX1a_Cn", "monomer", "AntHOX7_Cn"),
+  list("dimer", "AntHOX1a_Cn", "dimer", "AntHOX7_Cn"),
+  list("monomer", "AntHOX6a_Cn", "monomer", "AntHOX7_Cn"),
+  list("dimer", "AntHOX6a_Cn", "dimer", "AntHOX7_Cn"),
+  list("monomer", "AntHOX1_Cn", "monomer", "AntHOX7_Cn"),
+  list("dimer", "AntHOX1_Cn", "dimer", "AntHOX7_Cn"),
+  list("monomer", "AntHOX1a_Cn", "monomer", "AntHOX6a_Cn"),
+  list("monomer", "AntHOX1a_Cn", "monomer", "AntHOX8_Cn"),
+  list("monomer", "AntHOX6a_Cn", "monomer", "AntHOX8_Cn")
+)
+
+for (panel_index in seq_along(supp11_pairs)) {
+  pair_spec <- supp11_pairs[[panel_index]]
+  motif_list_1 <- if (pair_spec[[1]] == "monomer") representative_monomer_motifs else representative_dimer_motifs
+  motif_list_2 <- if (pair_spec[[3]] == "monomer") representative_monomer_motifs else representative_dimer_motifs
+  result <- scatter_details_forward_rc(
+    x_motif = response_get_selected_motif(motif_list_2, pair_spec[[4]]),
+    y_motif = response_get_selected_motif(motif_list_1, pair_spec[[2]]),
+    scatter_sequences, scatter_probes)
+  scatter_panel_results[[paste0("Figure S12", letters[panel_index])]] <- result
+  response_draw_plot(result$plot)
+}
+```
+
+# Supplementary Figure 13
+
+Oral-aboral class comparisons in Nematostella and Drosophila.
+
+**Figure S13a-b**
+
+```{r supp13-oral-aboral-scatters, fig.width=5.5, fig.height=4.5, out.width='49%', fig.show='hold'}
+supp12_pairs <- list(
+  c("AntHOX6_Cn", "AntHOX1_Cn"),
+  c("Lab_dmel", "Dfd_dmel")
+)
+
+for (panel_index in seq_along(supp12_pairs)) {
+  motif_pair <- supp12_pairs[[panel_index]]
+  result <- scatter_details_forward_rc(
+    x_motif = response_get_selected_motif(representative_dimer_motifs, motif_pair[2]),
+    y_motif = response_get_selected_motif(representative_dimer_motifs, motif_pair[1]),
+    scatter_sequences, scatter_probes)
+  scatter_panel_results[[paste0("Figure S13", letters[panel_index])]] <- result
+  response_draw_plot(result$plot)
+}
+```
+
+# Supplementary Figure 14
+
+Replicate logos included in the manuscript reproducibility panel.
+
+**Figure S14a-e**
+
+```{r supp14-replicate-logos, fig.width=7, fig.height=12, out.width='70%'}
+full_replicate_names <- vapply(
+  full_replicate_selection$motifs,
+  function(x) x$name,
+  character(1)
+)
+supp14_logo_order <- c(
+  "AntHOX6-PBX-rep1_Cn",
+  "AntHOX6-PBX-rep2_Cn",
+  "AntHOX8-PBX-rep1_Cn",
+  "AntHOX8-PBX-rep2_Cn",
+  "AntHOX1-PBX-rep1_Cn",
+  "AntHOX1-PBX-rep2_Cn",
+  "AntHOX1a-PBX-rep1-intein_Cn",
+  "AntHOX1a-PBX-rep2-intein_Cn",
+  "AntHOX1a-PBX-rep1-GST_Cn",
+  "AntHOX1a-PBX-rep2-GST_Cn"
+)
+supp14_logo_index <- match(supp14_logo_order, full_replicate_names)
+if (anyNA(supp14_logo_index)) {
+  stop("One or more Supplementary Figure 14 motif logos are missing.")
+}
+full_replicate_logos <- plot_hox_dimer_logos(
+  full_replicate_selection$motifs[supp14_logo_index]
+)
+supp14_logo_title_bases <- c(
+  rep("AntHOX6-PBX", 2),
+  rep("AntHOX8-PBX", 2),
+  rep("AntHOX1-PBX", 2),
+  rep("AntHOX1a-PBX", 4)
+)
+supp14_logo_title_suffixes <- c(
+  "-rep1",
+  "-rep2",
+  "-rep1",
+  "-rep2",
+  "-rep1",
+  "-rep2",
+  "_Intein-rep1",
+  "_Intein-rep2",
+  "_GST-rep1",
+  "_GST-rep2"
+)
+for (i in seq_along(full_replicate_logos)) {
+  full_replicate_logos[[i]] <- full_replicate_logos[[i]] +
+    ggplot2::labs(
+      title = response_hm_logo_title(
+        supp14_logo_title_bases[i],
+        supp14_logo_title_suffixes[i]
+      )
+    )
+  full_replicate_logos[[i]] <- response_compact_logo_plot(
+    full_replicate_logos[[i]],
+    title_size = 8
+  )
+}
+plot_response_logo_grid(
+  full_replicate_logos,
+  matrix(seq_along(full_replicate_logos), nrow = 5, byrow = TRUE)
+)
+```
+
+# Supplementary Figure 15
+
+Clustering of quality-controlled 12-mer replicate signatures with Drosophila
+and human reference models.
+
+**Figure S15a**
+
+```{r supp15-retained-12mer-tree, fig.width=10, fig.height=8}
+render_cluster_panel(
+  retained_with_references,
+  highlight_anthox1a = TRUE,
+  components = "tree"
+)
+```
+
+**Figure S15b**
+
+```{r supp15-retained-12mer-r2, fig.width=11, fig.height=10}
+render_cluster_panel(
+  retained_with_references,
+  highlight_anthox1a = TRUE,
+  components = "r2_heatmap"
+)
+```
+
+# Supplementary Figure 16
+
+Clustering of quality-controlled HOX-PBX 8-mer replicate signatures.
+
+**Figure S16a**
+
+```{r supp16-retained-8mer-tree, fig.width=10, fig.height=8}
+retained_8mer <- response_subset_motifs(retained_with_references, 2:9)
+render_cluster_panel(
+  retained_8mer,
+  highlight_anthox1a = TRUE,
+  components = "tree"
+)
+```
+
+**Figure S16b**
+
+```{r supp16-retained-8mer-r2, fig.width=11, fig.height=10}
+render_cluster_panel(
+  retained_8mer,
+  highlight_anthox1a = TRUE,
+  components = "r2_heatmap"
+)
+```
+
+# Supplementary Figure 17
+
+Eight-mer clustering of the intein AntHOX1a replicate pair, the AntHOX1,
+AntHOX6 and AntHOX8 replicate pairs, and one dataset each for AntHOX6a and
+AntHOX7, together with human and Drosophila references.
+
+**Figure S17a**
+
+```{r supp17-replicate-subset-8mer-tree, fig.width=10, fig.height=8}
+response2_8mer <- response_subset_motifs(response2_with_references, 2:9)
+render_cluster_panel(
+  response2_8mer,
+  highlight_anthox1a = TRUE,
+  components = "tree"
+)
+```
+
+**Figure S17b**
+
+```{r supp17-replicate-subset-8mer-r2, fig.width=11, fig.height=10}
+render_cluster_panel(
+  response2_8mer,
+  highlight_anthox1a = TRUE,
+  components = "r2_heatmap"
+)
+```
+
+# Supplementary Figure 18
+
+Clustering of quality-controlled HOX 4-mer replicate signatures.
+
+**Figure S18a**
+
+```{r supp18-retained-4mer-tree, fig.width=10, fig.height=8}
+retained_4mer <- response_subset_motifs(retained_with_references, 6:9)
+render_cluster_panel(
+  retained_4mer,
+  highlight_anthox1a = TRUE,
+  components = "tree"
+)
+```
+
+**Figure S18b**
+
+```{r supp18-retained-4mer-r2, fig.width=11, fig.height=10}
+render_cluster_panel(
+  retained_4mer,
+  highlight_anthox1a = TRUE,
+  components = "r2_heatmap"
+)
+```
+
+# Supplementary Figure 19
+
+Clustering of Nematostella replicate signatures across the complete 12-mer.
+
+**Figure S19a**
+
+```{r supp19-retained-cnidarian-tree, fig.width=9, fig.height=7}
+retained_names <- vapply(
+  retained_replicate_selection$motifs,
+  function(x) x$name,
+  character(1)
+)
+retained_cn_motifs <- retained_replicate_selection$motifs[
+  grepl("_Cn$", retained_names)
+]
+render_cluster_panel(
+  retained_cn_motifs,
+  highlight_anthox1a = TRUE,
+  components = "tree"
+)
+```
+
+**Figure S19b**
+
+```{r supp19-retained-cnidarian-r2, fig.width=9, fig.height=8}
+render_cluster_panel(
+  retained_cn_motifs,
+  highlight_anthox1a = TRUE,
+  components = "r2_heatmap"
+)
+```
+
+# Source data
+
+## Replicate discrepancy
+
+Each full 12-position motif has a 36-coordinate tetrahedron signature.
+Replicate differences use the complete signatures of four pairs:
+AntHOX1-PBX, AntHOX1a-PBX (intein), AntHOX6-PBX and AntHOX8-PBX.
+The AntHOX1a GST pair is not part of this estimate.
+
+The plane defined by the full 12-position human HOXA1, HOXA5 and HOXA9
+signatures has orthonormal basis vectors u<sub>1</sub> and u<sub>2</sub>, each
+with 36 coordinates. For each pair, the full difference vector Δ<sub>i</sub>
+is projected onto this plane, giving the length
+d<sub>i</sub> = √[(Δ<sub>i</sub> · u<sub>1</sub>)<sup>2</sup> +
+(Δ<sub>i</sub> · u<sub>2</sub>)<sup>2</sup>].
+All 12 positions are retained for this calculation in every panel.
+The common bar half-width is the mean of d<sub>1</sub>, d<sub>2</sub>,
+d<sub>3</sub> and d<sub>4</sub>, and the total horizontal or vertical bar
+length is twice this mean.
+
+The position-7 triangle and the 12-mer, 8-mer and 4-mer projections display
+this shared three-HOX-plane replicate discrepancy for all Nematostella
+points. Point coordinates use the positions and reference plane specified
+for each panel. The source tables include the 36-coordinate error-plane
+basis, full replicate differences and their projected lengths.
+
+```{r numerical-source-data, include=FALSE}
+source("Rfunctions/validate_projection_coordinates.R")
+projection_audit <- validate_projection_coordinates(
+  representative_dimer_motifs, projection_replicate_selection$motifs
+)
+validation_dir <- file.path("outputs", "manuscript_panel_validation")
+dir.create(validation_dir, recursive = TRUE, showWarnings = FALSE)
+for (name in c("validation", "features", "coordinates", "bars", "replicate_pool",
+               "replicate_pair_distances")) {
+  utils::write.csv(projection_audit[[name]],
+    file.path(validation_dir, paste0(name, ".csv")), row.names = FALSE)
+}
+panel_names <- c("Position 7 T-A-G plane" = "Figure 2b",
+  "12-mer" = "Figure S2a", "8-mer" = "Figure S2b", "4-mer" = "Figure S2c")
+publication_rows <- function(table) {
+  table <- table[table$Panel %in% names(panel_names), , drop = FALSE]
+  table$Panel <- unname(panel_names[table$Panel])
+  table[order(match(table$Panel, unname(panel_names))), , drop = FALSE]
+}
+source_coordinates <- publication_rows(projection_audit$coordinates)
+source_coordinates$Name <- response_clean_labels(
+  response_display_labels(source_coordinates$Name))
+source_bars <- publication_rows(projection_audit$bars)
+source_features <- publication_rows(projection_audit$features)
+source_features <- rbind(data.frame(Panel = "Figure 2b", Order = 1:3,
+  Coordinate = c("X7", "Y7", "Z7")), source_features)
+source_pairs <- projection_audit$replicate_pair_distances
+source_pairs$Pair <- sub("::(.*)$", " (\\1)", source_pairs$Pair)
+source_pairs$Sample_1 <- response_clean_labels(response_display_labels(source_pairs$Sample_1))
+source_pairs$Sample_2 <- response_clean_labels(response_display_labels(source_pairs$Sample_2))
+source_error_differences <- projection_audit$error_differences
+source_error_differences$Pair <- sub("::(.*)$", " (\\1)", source_error_differences$Pair)
+source_pool <- projection_audit$replicate_pool
+source_pool$Name <- response_clean_labels(response_display_labels(source_pool$Name))
+source_tables <- list(projection_coordinates = source_coordinates,
+  projection_error_bars = source_bars, projection_features = source_features,
+  replicate_pair_distances = source_pairs, replicate_pool = source_pool,
+  projection_error_basis = projection_audit$error_basis,
+  projection_error_differences = source_error_differences)
+for (name in names(source_tables)) {
+  utils::write.csv(source_tables[[name]],
+    file.path(source_data_dir, paste0(name, ".csv")), row.names = FALSE)
+}
+```
+
+```{r replicate-distances-table}
+knitr::kable(source_pairs[, c("Sample_1", "Sample_2", "Projected_Euclidean_distance")],
+  digits = 7, row.names = FALSE,
+  col.names = c("Replicate 1", "Replicate 2", "Projected Euclidean distance"))
+```
+
+```{r projection-bars-table}
+knitr::kable(source_bars[, c("Panel", "Half_width", "Total_length")],
+  digits = 7, row.names = FALSE,
+  col.names = c("Panel", "Bar half-width", "Total bar length"))
+```
+
+## Projection coordinates
+
+Coordinates are expressed in orthonormal bases of the planes used for the
+corresponding panels. CSV tables contain the coordinates, selected features,
+replicate identities and error-bar values. Newick trees and pairwise
+R-squared matrices accompany the clustering panels. Tree-label tables link
+Newick identifiers to the labels displayed in each figure.
+
+```{r projection-coordinates-tables, results='asis'}
+for (panel in unname(panel_names)) {
+  cat("\n\n### ", panel, "\n\n", sep = "")
+  table <- source_coordinates[source_coordinates$Panel == panel,
+    c("Name", "x", "y"), drop = FALSE]
+  cat(as.character(knitr::kable(table, digits = 6, row.names = FALSE,
+    col.names = c("HOX model", "x", "y"))), sep = "\n")
+  cat("\n\n")
+}
+```
+
+## Affinity comparisons
+
+CSV tables provide the seeded DNA sequences, separate forward and
+reverse-complement affinities and their sums for every model used in the
+scatter plots. Coordinates, sequence identities and fitted-line coefficients for all
+28 scatter panels accompany the model-level affinity and coefficient tables.
+
+```{r affinity-source-data, include=FALSE}
+utils::write.csv(data.frame(Sequence_id = seq_along(scatter_sequences),
+  Sequence = scatter_sequences,
+  Reverse_complement = scatter_reverse_complement(scatter_sequences)),
+  file.path(source_data_dir, "scatter_sequences.csv"), row.names = FALSE)
+utils::write.csv(forward_rc_affinity_source_data(),
+  file.path(source_data_dir, "scatter_model_affinities.csv"), row.names = FALSE)
+stopifnot(length(scatter_panel_results) == 28L)
+utils::write.csv(forward_rc_coefficient_source_data(),
+  file.path(source_data_dir, "scatter_model_coefficients.csv"), row.names = FALSE)
+scatter_panel_table <- do.call(rbind, lapply(names(scatter_panel_results), function(panel) {
+  result <- scatter_panel_results[[panel]]
+  data.frame(Panel = panel, X_model = result$x_model, Y_model = result$y_model,
+    X_model_width = result$x_width, Y_model_width = result$y_width)
+}))
+utils::write.csv(scatter_panel_table,
+  file.path(source_data_dir, "scatter_panels.csv"), row.names = FALSE)
+for (field in c("data", "slopes")) {
+  table <- do.call(rbind, lapply(names(scatter_panel_results), function(panel) {
+    data.frame(Panel = panel, scatter_panel_results[[panel]][[field]])
+  }))
+  filename <- if (field == "data") "scatter_coordinates.csv" else "scatter_regression_fits.csv"
+  utils::write.csv(table, file.path(source_data_dir, filename), row.names = FALSE)
+}
+utils::write.csv(representative_selection$best_table,
+  file.path(source_data_dir, "dimer_model_selection.csv"), row.names = FALSE)
+utils::write.csv(monomer_selection$best_table,
+  file.path(source_data_dir, "monomer_model_selection.csv"), row.names = FALSE)
+input_files <- unique(c(representative_pwm_files, monomer_pwm_files,
+  full_replicate_files, projection_replicate_files))
+input_manifest <- data.frame(Path = sort(input_files), SHA256 = vapply(sort(input_files),
+  function(path) digest::digest(readBin(path, "raw", n = file.info(path)$size),
+    algo = "sha256", serialize = FALSE), character(1)))
+utils::write.csv(input_manifest, file.path(source_data_dir, "input_files.csv"), row.names = FALSE)
+panel_manifest <- utils::read.csv("Rfunctions/manuscript_panels.csv", stringsAsFactors = FALSE)
+utils::write.csv(panel_manifest, file.path(source_data_dir, "panel_manifest.csv"), row.names = FALSE)
+```
+
+## Software environment
+
+The analysis uses R and the packages listed below.
+
+```{r software-versions}
+software_packages <- unique(c(required_packages, "rmarkdown", "knitr"))
+software_versions <- data.frame(
+  Software = c("R", software_packages),
+  Version = c(as.character(getRversion()), vapply(software_packages,
+    function(package) as.character(utils::packageVersion(package)), character(1)))
+)
+utils::write.csv(software_versions,
+  file.path(source_data_dir, "software_versions.csv"), row.names = FALSE)
+knitr::kable(software_versions, row.names = FALSE)
+```

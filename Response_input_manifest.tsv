@@ -1,0 +1,21 @@
+input_type	scope	path_or_pattern	expected_count	generator_script	status_or_note
+PSAM	AntHox1 full and retained	CnDmelHox/PSAMs/AntHox1Relicates/*PSAM*.txt	4	CnDmelHox/CnDmelHoxExdPbx_ProBound.ipynb	Two candidate PSAMs for each of rep1 and rep2.
+PSAM	AntHox1a full and retained	CnDmelHox/PSAMs/AntHox1aReplicates/*(intein|GST)*PSAM*.txt	8	CnDmelHox/CnDmelHoxExdPbx_ProBound.ipynb	Two candidate PSAMs for each intein/GST replicate condition.
+PSAM	AntHox6 full and retained	CnDmelHox/PSAMs/AntHox6Replicates/*PSAM*.txt	4	CnDmelHox/CnDmelHoxExdPbx_ProBound.ipynb	Two candidate PSAMs for each of rep1 and rep2.
+PSAM	AntHox6a full assessment	CnDmelHox/PSAMs/AntHox6aReplicates/*PSAM*.txt	4	CnDmelHox/CnDmelHoxExdPbx_ProBound.ipynb	Rep2 is used through the Rosner test and excluded downstream.
+PSAM	AntHox7 full assessment	CnDmelHox/PSAMs/AntHox7Replicates/*PSAM*.txt	4	CnDmelHox/CnDmelHoxExdPbx_ProBound.ipynb	Rep2 is used through the Rosner test and excluded downstream.
+PSAM	AntHox8 full and retained	CnDmelHox/PSAMs/AntHox8Replicates/*PSAM*.txt	4	CnDmelHox/CnDmelHoxExdPbx_ProBound.ipynb	Two candidate PSAMs for each of rep1 and rep2.
+PSAM	Drosophila dimer references	CnDmelHox/PSAMs/{AbdA,AbdB,Antp,Dfd,Lab,Pb,Scr,Ubx}_dmel_*PSAM_[01].txt	16	CnDmelHox/CnDmelHoxExdPbx_ProBound.ipynb	All are used after representative-PSAM selection.
+PSAM	Human dimer references	CnDmelHox/PSAMs/{HoxA1,HoxA5,HoxA9}_human_Pbx_*PSAM_[01].txt	6	JudithHumanHox/humanHox_ProBound.ipynb	These are copies of the PSAMs in JudithHumanHox/PSAMs.
+PSAM	Cnidarian monomers	CnHoxMonomer/PSAMs/*PSAM_*	12	CnHoxMonomer/CnHoxMonomer_ProBound.ipynb	Current Response monomer input set.
+CountTable	AntHox replicate dimers	CnDmelHox/countTables/AntHox_countTables/*.tsv excluding source_manifest.tsv	12	CnDmelHox/CnDmelHoxExdPbx_ProBound.ipynb	Local derived CountTables for AntHox1, AntHox1a intein, AntHox6, AntHox6a, AntHox7, and AntHox8 rep1/rep2.
+CountTable	AntHox1a GST dimers	Not present in the workspace	0	CnDmelHox/CnDmelHoxExdPbx_ProBound.ipynb	Provenance gap: GST PSAMs are present and sufficient to knit Response, but their generating CountTables are absent.
+CountTable	Drosophila dimer references	CnDmelHox/countTables/{AbdA,AbdB,Antp,Dfd,Lab,Pb,Scr,Ubx}.tsv	8	CnDmelHox/CnDmelHoxExdPbx_ProBound.ipynb	Derived CountTables only; no raw reads required.
+CountTable	Human dimer references	JudithHumanHox/countTables/{Pbx_HoxA1_human,Pbx_HoxA5_human,Pbx_HoxA9_human}.tsv	3	JudithHumanHox/humanHox_ProBound.ipynb	Derived CountTables only; no raw reads required.
+CountTable	Cnidarian monomers used	CnHoxMonomer/countTables/{AntHox1_Cn,AntHox1a_Cn,AntHox6a_Cn,AntHox7_Cn,AntHox8_Cn}.tsv	5	CnHoxMonomer/CnHoxMonomer_ProBound.ipynb	CountTables corresponding to the monomer PSAMs consumed by Response.
+PSAM_generator	Dimer generator	CnDmelHox/CnDmelHoxExdPbx_ProBound.ipynb	1		For replicate PSAM regeneration, point its count-table directory at CnDmelHox/countTables/AntHox_countTables and retain the exported PSAM components.
+PSAM_generator	Human generator	JudithHumanHox/humanHox_ProBound.ipynb	1		Exports the human HOXA1/HOXA5/HOXA9 PBX PSAM components.
+PSAM_generator	Monomer generator	CnHoxMonomer/CnHoxMonomer_ProBound.ipynb	1		Exports the cnidarian monomer PSAM components.
+analysis_script	Core SELEX functions	Rfunctions/SELEXseqFunctions.R	1		Sourced by Response.
+analysis_script	Response-specific functions	Rfunctions/SELEXseqFunctions_response.R	1		Contains representative selection, Rosner, PCA-error, clustering, and tree helpers.
+analysis_script	Motif DNA scoring	Rfunctions/motifDNAScoring.R	1		Sourced by Response.

@@ -1,0 +1,352 @@
+---
+title: "Final AntHox Replicate Comparisons"
+output:
+  html_document:
+    df_print: paged
+---
+
+## imports
+```{r}
+required_packages <- c(
+  "FamilyCode", "pheatmap", "ggplot2", "dplyr", "ape", "phangorn",
+  "ggtree", "Rtsne", "ggrepel", "EnvStats"
+)
+missing_packages <- required_packages[
+  !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
+]
+if (length(missing_packages) > 0) {
+  stop(
+    paste(
+      "Install the required R packages before knitting Response:",
+      paste(missing_packages, collapse = ", ")
+    )
+  )
+}
+
+invisible(lapply(required_packages, library, character.only = TRUE))
+source("Rfunctions/SELEXseqFunctions.R")
+source("Rfunctions/SELEXseqFunctions_response.R")
+source('Rfunctions/motifDNAScoring.R')
+```
+
+## Derived inputs and provenance
+
+This analysis begins with derived PSAMs rather than raw sequencing data. The
+required PSAM inputs, corresponding CountTables, and PSAM-generation scripts
+are recorded in `Response_input_manifest.tsv`.
+
+## Full AntHox replicate assessment
+
+### Load all replicate PSAMs
+
+```{r}
+full_AntHoxReplicatePWMs <- c(
+  list.files('CnDmelHox/PSAMs/AntHox1Relicates', pattern = 'PSAM.*\\.txt$', full.names = TRUE),
+  list.files('CnDmelHox/PSAMs/AntHox1aReplicates', pattern = '(intein|GST).*PSAM.*\\.txt$', full.names = TRUE),
+  list.files('CnDmelHox/PSAMs/AntHox6Replicates', pattern = 'PSAM.*\\.txt$', full.names = TRUE),
+  list.files('CnDmelHox/PSAMs/AntHox6aReplicates', pattern = 'PSAM.*\\.txt$', full.names = TRUE),
+  list.files('CnDmelHox/PSAMs/AntHox7Replicates', pattern = 'PSAM.*\\.txt$', full.names = TRUE),
+  list.files('CnDmelHox/PSAMs/AntHox8Replicates', pattern = 'PSAM.*\\.txt$', full.names = TRUE)
+)
+
+if (length(full_AntHoxReplicatePWMs) != 28) {
+  stop('Expected 28 AntHox replicate PSAM files before outlier assessment.')
+}
+
+data.frame(
+  gene_symbol = sapply(full_AntHoxReplicatePWMs, parse_hox_gene_symbol),
+  psam = basename(full_AntHoxReplicatePWMs)
+)
+
+full_AntHox_motifs <- load_hox_dimer_motifs(full_AntHoxReplicatePWMs)
+```
+
+### Designate the seed-like PSAM for every replicate
+
+```{r}
+HOXseed <- make_hox_seed()
+
+full_AntHox_selection <- select_hox_seed_representatives(
+  full_AntHox_motifs,
+  HOXseed
+)
+full_HOX_motifScores <- full_AntHox_selection$scores
+full_HDfiltered_table <- full_AntHox_selection$best_table
+
+plot.ecdf(as.numeric(full_HDfiltered_table$score))
+full_HDfiltered_table
+
+full_AntHox_representatives <- full_AntHox_selection$motifs
+plot_hox_dimer_logos(full_AntHox_representatives)
+```
+
+### Motif-matching-score outlier assessment
+
+```{r, fig.width=6.2, fig.height=4.6, out.width='70%'}
+rosner_plot <- plot_response_rosner_outliers(
+  scores = full_HDfiltered_table$score,
+  labels = full_HDfiltered_table$gene_symbol,
+  k = 2,
+  alpha = 0.05,
+  title = "Motif-Matching Score outlier analysis",
+  y_label = "MMS"
+)
+rosner_plot
+
+rosner_summary <- attr(rosner_plot, "rosner_summary")
+full_seed_scores <- as.numeric(full_HDfiltered_table$score)
+rosner_outlier_rows <- full_seed_scores > rosner_summary$threshold
+excluded_replicates <- as.character(
+  full_HDfiltered_table$gene_symbol[rosner_outlier_rows]
+)
+
+expected_excluded_replicates <- c(
+  "AntHOX6a-PBX-rep2_Cn",
+  "AntHOX7-PBX-rep2_Cn"
+)
+if (!setequal(excluded_replicates, expected_excluded_replicates)) {
+  stop(
+    paste(
+      "Rosner outliers did not match the expected AntHOX6a and AntHOX7 rep2 set:",
+      paste(excluded_replicates, collapse = ", ")
+    )
+  )
+}
+
+data.frame(
+  excluded_replicate = excluded_replicates,
+  MMS = full_seed_scores[rosner_outlier_rows]
+)
+```
+
+## Retained post-outlier population
+
+The downstream analysis excludes AntHOX6a-PBX rep2 and AntHOX7-PBX rep2,
+while retaining both the intein and GST AntHOX1a replicate pairs and all
+available AntHOX1, AntHOX6, and AntHOX8 replicates.
+
+```{r}
+full_psam_gene_symbols <- vapply(
+  full_AntHoxReplicatePWMs,
+  parse_hox_gene_symbol,
+  character(1)
+)
+AntHoxReplicatePWMs <- full_AntHoxReplicatePWMs[
+  !(full_psam_gene_symbols %in% excluded_replicates)
+]
+
+if (length(AntHoxReplicatePWMs) != 24) {
+  stop('Expected 24 AntHox PSAM files after excluding AntHOX6a and AntHOX7 rep2.')
+}
+
+data.frame(
+  gene_symbol = vapply(AntHoxReplicatePWMs, parse_hox_gene_symbol, character(1)),
+  psam = basename(AntHoxReplicatePWMs)
+)
+
+motifs <- load_hox_dimer_motifs(AntHoxReplicatePWMs)
+AntHox_selection <- select_hox_seed_representatives(motifs, HOXseed)
+HOX_motifScores <- AntHox_selection$scores
+HDfiltered_table <- AntHox_selection$best_table
+HOX_motifs <- AntHox_selection$motifs
+plot_hox_dimer_logos(HOX_motifs)
+
+dimer_motifs <- HOX_motifs
+AntHox_replicate_motifs <- HOX_motifs
+```
+
+```{r, fig.width=12, fig.height=8.5, out.width='100%'}
+rooted = F
+plotClusters_AntHox1a(HOX_motifs, rooted = rooted)
+```
+
+## add in dmel and human Hox
+```{r}
+referencePWMs <- list.files('CnDmelHox/PSAMs', pattern = 'PSAM.*\\.txt$', full.names = TRUE)
+referencePWMs <- referencePWMs[!grepl('^AntHOX', basename(referencePWMs))]
+
+data.frame(
+  source = 'dmel/human reference',
+  gene_symbol = sapply(referencePWMs, parse_hox_gene_symbol),
+  psam = basename(referencePWMs)
+)
+
+motifs <- load_hox_dimer_motifs(referencePWMs)
+reference_selection <- select_hox_seed_representatives(motifs, HOXseed)
+HDfiltered_table <- reference_selection$best_table
+plot.ecdf(as.numeric(HDfiltered_table$score))
+HDfiltered_table
+
+reference_motifs <- reference_selection$motifs
+plot_hox_dimer_logos(reference_motifs)
+
+HOX_motifs <- c(reference_motifs, AntHox_replicate_motifs)
+dimer_motifs <- HOX_motifs
+```
+
+## make distance matrix
+```{r, fig.width=12, fig.height=8.5, out.width='100%'}
+rooted = F
+plotClusters_AntHox1a(HOX_motifs, rooted = rooted)
+```
+
+# Hox 4mer
+```{r, fig.width=12, fig.height=8.5, out.width='100%'}
+Hox4mer_motifs <- lapply(HOX_motifs, function(x) list(name = x$name, matrix = x$matrix[,6:9]))
+plotClusters_AntHox1a(Hox4mer_motifs, rooted = rooted)
+```
+
+# Hox-Pbx 8mer
+```{r, fig.width=12, fig.height=8.5, out.width='100%'}
+HoxPbx8mer_motifs <- lapply(HOX_motifs, function(x) list(name = x$name, matrix = x$matrix[,2:9]))
+plotClusters_AntHox1a(HoxPbx8mer_motifs, rooted = rooted)
+```
+
+## heat map of Dmel Hox-Exd
+```{r, fig.width=12, fig.height=8.5, out.width='100%'}
+motifNames <- unlist(lapply(HOX_motifs, function(x) x$name))
+plotClusters_PCA(
+  HOX_motifs[grep('dmel', motifNames)],
+  rooted = rooted,
+  error_reference_motifs = HOX_motifs
+)
+```
+
+## heat map of Cnidarian Hox-PBX replicates
+```{r, fig.width=12, fig.height=8.5, out.width='100%'}
+plotClusters_AntHox1a(HOX_motifs[grep('Cn', motifNames)], rooted = rooted)
+```
+
+## heatmap of Human and Cndarian Hox
+```{r, fig.width=12, fig.height=8.5, out.width='100%'}
+plotClusters_AntHox1a(HOX_motifs[-grep('dmel', motifNames)], rooted = rooted)
+```
+
+## load Monomer motifs
+```{r}
+PWMsID <- list.files('CnHoxMonomer/PSAMs', pattern = 'PSAM_')
+motifs <- list()
+options(warn=-1)
+for(i in 1:length(PWMsID)){
+  motif <- PWMsID[i]
+  motif <- read.table(paste0('CnHoxMonomer/PSAMs/',motif), header = F)
+  motif <- ddG2frequency(motif)
+  motif[motif < 0.01] <- 0.01#add psuedo count
+  rownames(motif) <- DNA()
+  ID <- strsplit(PWMsID[i],'_')[[1]]
+  add <- list()
+  add$gene_symbol <- paste0(ID[1],'_',ID[2])
+  add$study <- i
+  add$mode <- gsub('.txt','',ID[length(ID)])
+  add$matrix <- as.matrix(motif)
+  motifs[[length(motifs)+1]] <- add
+  add <- list()
+  add$gene_symbol <- paste0(ID[1],'_',ID[2])
+  add$study <- i
+  add$mode <- paste0('-',gsub('.txt','',ID[length(ID)]))
+  add$matrix <- RCmotif(as.matrix(motif))
+  motifs[[length(motifs)+1]] <- add
+}
+```
+
+## align motifs
+```{r}
+HOXseed <- matrix(nrow = 4,ncol = 8,data = c(0.5,0,0,0.5, #ACGT
+                                            0,0,0,1,
+                                            1,0,0,0,
+                                            1,0,0,0,
+                                            0,0,0,1,
+                                            0,0,0.5,0.5,
+                                            0.5,0,0.5,0,
+                                            0,0,0,0
+                                            ))
+rownames(HOXseed) <- DNA()
+
+HOX_motifScores <- scoreMotifList(motifs, HOXseed)
+
+HDids<- unique(HOX_motifScores$gene_symbol)
+HDfiltered_table <- data.frame(NULL)
+for(i in 1:length(HDids)){
+  fDT <- HOX_motifScores[HOX_motifScores$gene_symbol == HDids[i],]
+  HDfiltered_table <- rbind.data.frame(HDfiltered_table, fDT[which.min(fDT$score),])
+}
+plot.ecdf(as.numeric(HDfiltered_table$score))
+HOX_motifs <- filterMotifList(HDfiltered_table, motifs, 8)
+lapply(HOX_motifs, function(x) {
+  
+  # 1. Determine color based on original name (checking for substring)
+  title_color <- "black" # Default
+  if (grepl("Cn", x$name)) {
+    title_color <- "#E69F00"
+  } else if (grepl("dmel", x$name)) {
+    title_color <- "#56B4E9"
+  } else if (grepl("human", x$name)) {
+    title_color <- "#009E73"
+  }
+  
+  # 2. Clean the name: remove first underscore and everything after it
+  clean_name <- sub("_.*", "", x$name)
+  
+  # 3. Plot with clean name and assigned color
+  mononucleotide_logo(frequency2ddG(x$matrix)) +
+    ggtitle(clean_name) +
+    theme(plot.title = element_text(color = title_color))
+})
+monomer_motifs <- HOX_motifs
+```
+
+## make distance matrix
+```{r, fig.width=12, fig.height=8.5, out.width='100%'}
+plotClusters_PCA(HOX_motifs, rooted = rooted)
+```
+
+<!-- # Synthetic scatter plots -->
+<!-- ```{r} -->
+<!-- probes <- c('TGATTAAT','TGATTTAT','TGATTGAT','TGATGGAT', 'TGATTTAC', 'TGATAAAT', 'TGATCGAT') -->
+<!-- seqs <- generate_dna(2000, 12, motifs = probes) -->
+
+<!-- for(i in 1:length(dimer_motifs)){ -->
+<!--   for(j in 1:length(dimer_motifs)){ -->
+<!--     if(j >= i) next -->
+<!--     plot(makeSyntheticScatterPlot(motif1 = dimer_motifs[[i]],motif2 = dimer_motifs[[j]], seqs, probes)) -->
+<!--   } -->
+<!-- } -->
+<!-- ``` -->
+
+<!-- # Monomer comparison -->
+<!-- ```{r} -->
+<!-- for(i in 1:length(monomer_motifs)){ -->
+<!--   for(j in 1:length(monomer_motifs)){ -->
+<!--     if(j >= i) next -->
+<!--     plot(makeSyntheticScatterPlot(motif1 = monomer_motifs[[i]],motif2 = monomer_motifs[[j]], seqs, probes)) -->
+<!--   } -->
+<!-- } -->
+<!-- ``` -->
+
+<!-- # Monomer-Dimer comparison -->
+<!-- ```{r} -->
+<!-- for(i in 1:length(dimer_motifs)){ -->
+<!--   for(j in 1:length(monomer_motifs)){ -->
+<!--     plot(makeSyntheticScatterPlot(motif1 = dimer_motifs[[i]],motif2 = monomer_motifs[[j]], seqs, probes)) -->
+<!--   } -->
+<!-- } -->
+<!-- ``` -->
+
+<!-- # Column representation -->
+<!-- ```{r} -->
+<!-- for(i in 1:length(dimer_motifs)){ -->
+<!--   plot(plot_group_jitter(makeProbeAffinityList(probes, getMotifScores(dimer_motifs[[i]], seqs)), probe, Affinities, title = dimer_motifs[[i]]$name)) -->
+<!-- } -->
+
+<!-- ``` -->
+<!-- ## AntHox6a vs Dfd -->
+
+<!-- ```{r} -->
+<!-- probes <- c('TGATTAAT','TGATTGAT') -->
+<!-- seqs <- generate_dna(1000, 12, motifs = probes) -->
+<!-- motifNames <- unlist(lapply(dimer_motifs, function(x) x$name)) -->
+<!-- AntHox6aID <- grep('^AntHOX6a', motifNames)[1] -->
+<!-- DfdID <- grep('^Dfd', motifNames)[1] -->
+<!-- plot(makeSyntheticScatterPlot(motif1 = dimer_motifs[[AntHox6aID]],motif2 = dimer_motifs[[DfdID]], seqs, probes, colors = c("#0c64c0", "#0f5c1a"))) -->
+
+<!-- ``` -->
